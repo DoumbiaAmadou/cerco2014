@@ -11,13 +11,39 @@ let error_float () = error "float not supported."
 
 (* Helper functions *)
 
+(** [change_entry lbl def] changes to [lbl] the entry of the graph of the ERTL
+    function [def]. *)
+
+let change_entry (lbl : Label.t) (def : ERTL.internal_function)
+    : ERTL.internal_function =
+  { def with ERTL.f_entry = lbl }
+
 let change_exit_label lbl def =
   { def with ERTL.f_exit = lbl }
 
-let add_graph lbl stmt def =
+(** [add_graph lbl stmt def] associates to the label [lbl] the statement [stmt]
+    in the graph of the ERTL function [def]. *)
+
+let add_graph
+    (lbl  : Label.t)
+    (stmt : ERTL.statement)
+    (def  : ERTL.internal_function)
+    : ERTL.internal_function =
   { def with ERTL.f_graph = Label.Map.add lbl stmt def.ERTL.f_graph }
 
+(** [fresh_label def] returns a fresh [lbl] for the ERTL function [def]. *)
+
 let fresh_label def = Label.Gen.fresh def.ERTL.f_luniverse
+
+(** [generate stmt def] adds the instruction [stmt] at the beginning of the
+    graph of the ERTL function [def]. *)
+
+let generate (stmt : ERTL.statement) (def : ERTL.internal_function)
+    : ERTL.internal_function =
+  let entry = fresh_label def in
+  let def =
+    { def with ERTL.f_graph = Label.Map.add entry stmt def.ERTL.f_graph } in
+  change_entry entry def
 
 let change_label lbl = function
   | ERTL.St_skip _ -> ERTL.St_skip lbl
@@ -44,15 +70,21 @@ let change_label lbl = function
 (* Add a list of instruction in a graph, from one label to another, by creating
    fresh labels inbetween. *)
 
-let rec adds_graph stmt_list start_lbl dest_lbl def = match stmt_list with
-  | [] -> add_graph start_lbl (ERTL.St_skip dest_lbl) def
-  | [stmt] ->
-    add_graph start_lbl (change_label dest_lbl stmt) def
-  | stmt :: stmt_list ->
-    let tmp_lbl = fresh_label def in
-    let stmt = change_label tmp_lbl stmt in
-    let def = add_graph start_lbl stmt def in
-    adds_graph stmt_list tmp_lbl dest_lbl def
+let rec adds_graph
+    (stmt_list : ERTL.statement list)
+    (start_lbl : Label.t)
+    (dest_lbl : Label.t)
+    (def : ERTL.internal_function)
+    : ERTL.internal_function =
+  match stmt_list with
+    | [] -> add_graph start_lbl (ERTL.St_skip dest_lbl) def
+    | [stmt] ->
+      add_graph start_lbl (change_label dest_lbl stmt) def
+    | stmt :: stmt_list ->
+      let tmp_lbl = fresh_label def in
+      let stmt = change_label tmp_lbl stmt in
+      let def = add_graph start_lbl stmt def in
+      adds_graph stmt_list tmp_lbl dest_lbl def
 
 (* Process a list of function that adds a list of instructions to a graph, from
    one label to another, and by creating fresh labels inbetween. *)
@@ -75,6 +107,9 @@ let size_of_sig_type = function
 let reg_size_of_sig_type sig_type =
   MiscPottier.div_up (size_of_sig_type sig_type) Driver.TargetArch.int_size
 
+(** [fresh_reg def] returns a fresh pseudo-register for the ERTL function
+    [def]. *)
+
 let fresh_reg def =
   let r = Register.fresh def.ERTL.f_runiverse in
   let locals = Register.Set.add r def.ERTL.f_locals in
@@ -90,6 +125,9 @@ let rec fresh_regs def n =
 let fresh_sig_type def sig_type =
   fresh_regs def (reg_size_of_sig_type sig_type)
 
+(** [fresh_pointer def] returns a list of fresh pseudo-registers for the ERTL
+    function [def] that is large enough to hold an address. *)
+
 let fresh_pointer def = fresh_sig_type def AST.Sig_ptr
 
 let choose_rest rest1 rest2 = match rest1, rest2 with
@@ -98,7 +136,19 @@ let choose_rest rest1 rest2 = match rest1, rest2 with
   | _ -> assert false (* do not use on these arguments *)
 
 
-let translate_add destrs srcrs1 srcrs2 start_lbl dest_lbl def =
+(** [translate_add destrs srcrs1 srcrs2 start_lbl dest_lbl def] adds
+    instructions starting at label [start_lbl] and ending at label [dest_lbl] to
+    the graph of the ERTL function [def] that sum the registers [srcrs1] and
+    [srcrs2] and put the result in the registers [destrs]. *)
+
+let translate_add
+    (destrs    : Register.t list)
+    (srcrs1    : Register.t list)
+    (srcrs2    : Register.t list)
+    (start_lbl : Label.t)
+    (dest_lbl  : Label.t)
+    (def       : ERTL.internal_function)
+    : ERTL.internal_function =
   let ((srcrs1_common, srcrs1_rest), (srcrs2_common, srcrs2_rest)) =
     MiscPottier.reduce srcrs1 srcrs2 in
   let srcrs_rest = choose_rest srcrs1_rest srcrs2_rest in
@@ -142,7 +192,19 @@ let translate_add destrs srcrs1 srcrs2 start_lbl dest_lbl def =
   adds_graph (insts_init @ insts_add @ insts_add_cted @ insts_rest)
     start_lbl dest_lbl def
 
-let translate_sub destrs srcrs1 srcrs2 start_lbl dest_lbl def =
+(** [translate_sub destrs srcrs1 srcrs2 start_lbl dest_lbl def] adds
+    instructions starting at label [start_lbl] and ending at label [dest_lbl] to
+    the graph of the ERTL function [def] that substract the registers [srcrs1]
+    and [srcrs2] and put the result in the registers [destrs]. *)
+
+let translate_sub
+    (destrs    : Register.t list)
+    (srcrs1    : Register.t list)
+    (srcrs2    : Register.t list)
+    (start_lbl : Label.t)
+    (dest_lbl  : Label.t)
+    (def       : ERTL.internal_function)
+    : ERTL.internal_function =
   let ((srcrs1_common, srcrs1_rest), (srcrs2_common, srcrs2_rest)) =
     MiscPottier.reduce srcrs1 srcrs2 in
   let srcrs_rest = choose_rest srcrs1_rest srcrs2_rest in
@@ -209,47 +271,63 @@ let restore_hdws2 hdws psds =
   restore_hdws (List.combine psds hdws)
 
 
-let get_params_hdw params =
+(** [get_params_hdw params def] adds instructions at the beginning of the graph
+    of the ERTL function [def] that set to the pseudo-registers [params] the
+    contents of the conventional parameter registers. *)
+
+let get_params_hdw (params : Register.t list) (def : ERTL.internal_function)
+    : ERTL.internal_function =
   assert false (* TODO M1 *)
 
-let get_params_stack params =
+(** [get_params_stack params def] adds instructions at the beginning of the
+    graph of the ERTL function [def] that set to the pseudo-registers [params]
+    the contents of the part of the stack that is reserved for parameters. *)
+
+let get_params_stack (params : Register.t list) (def : ERTL.internal_function)
+    : ERTL.internal_function =
   assert false (* TODO M1 *)
 
-(* Parameters are taken from the physical parameter registers first. If there
-   are not enough such of these, then the remaining parameters are taken from
-   the stack. *)
+(** [get_params params def] adds instructions at the beginning of the graph of
+    the ERTL function [def] that set to the pseudo-registers [params] the
+    parameters of the function. They are fetched from the conventional parameter
+    registers as much as possible, and then from the stack. *)
 
-let get_params params =
+let get_params (params : Register.t list) (def : ERTL.internal_function)
+    : ERTL.internal_function =
   assert false (* TODO M1 *)
 
 let add_prologue params sra sregs def =
-  let start_lbl = def.ERTL.f_entry in
-  let tmp_lbl = fresh_label def in
-  let last_stmt = Label.Map.find start_lbl def.ERTL.f_graph in
   let callee_saved =
     Driver.TargetArch.RegisterSet.elements Driver.TargetArch.callee_saved in
-  let def =
-    add_translates
-      ([adds_graph [ERTL.St_comment ("Prologue", start_lbl)]] @
-       (* new frame *)
-       [adds_graph [ERTL.St_comment ("New frame", start_lbl) ;
-		    ERTL.St_newframe start_lbl]] @
-       (* save the return address *)
-       [adds_graph [ERTL.St_comment ("Save return address", start_lbl)]] @
-       [adds_graph (save_hdws2 sra Driver.TargetArch.ra start_lbl)] @
-       (* save callee-saved registers *)
-       [adds_graph [ERTL.St_comment ("Save callee-saved registers",
-				     start_lbl)]] @
-       [adds_graph (save_hdws2 sregs callee_saved start_lbl)] @
-       (* fetch parameters *)
-       [adds_graph [ERTL.St_comment ("Fetch parameters", start_lbl)]] @
-       (get_params params) @
-       [adds_graph [ERTL.St_comment ("End Prologue", start_lbl)]])
-      start_lbl tmp_lbl def in
-  add_graph tmp_lbl last_stmt def
+  let def = generate (ERTL.St_comment ("End Prologue", def.ERTL.f_entry)) def in
+  let def = get_params params def in
+  let start_lbl = fresh_label def in
+  let def = change_entry start_lbl def in
+  add_translates
+    ([adds_graph [ERTL.St_comment ("Prologue", start_lbl)]] @
+     (* new frame *)
+     [adds_graph [ERTL.St_comment ("New frame", start_lbl) ;
+		  ERTL.St_newframe start_lbl]] @
+     (* save the return address *)
+     [adds_graph [ERTL.St_comment ("Save return address", start_lbl)]] @
+     [adds_graph (save_hdws2 sra Driver.TargetArch.ra start_lbl)] @
+     (* save callee-saved registers *)
+     [adds_graph [ERTL.St_comment ("Save callee-saved registers",
+				   start_lbl)]] @
+     [adds_graph (save_hdws2 sregs callee_saved start_lbl)] @
+     (* fetch parameters *)
+     [adds_graph [ERTL.St_comment ("Fetch parameters", start_lbl)]])
+    start_lbl def.ERTL.f_entry def
 
 
-let assign_result ret_regs start_lbl dest_lbl def =
+(** [assign_result ret_regs def] adds instructions at the beginning of the ERTL
+    function [def] instructions that assign to the conventional result registers
+    the contents of the pseudo-registers [ret_regs]. *)
+
+let assign_result
+    (ret_regs : Register.t list)
+    (def      : ERTL.internal_function)
+    : ERTL.internal_function =
   assert false (* TODO M1 *)
 
 let add_epilogue ret_regs sra sregs def =
@@ -260,11 +338,7 @@ let add_epilogue ret_regs sra sregs def =
     Driver.TargetArch.RegisterSet.elements Driver.TargetArch.callee_saved in
   let def =
     add_translates
-      ([adds_graph [ERTL.St_comment ("Epilogue", start_lbl)]] @
-       (* assign the result to actual return registers *)
-       [adds_graph [ERTL.St_comment ("Set result", start_lbl)]] @
-       [assign_result ret_regs] @
-       (* restore callee-saved registers *)
+      ((* restore callee-saved registers *)
        [adds_graph [ERTL.St_comment ("Restore callee-saved registers",
 				     start_lbl)]] @
        [adds_graph (restore_hdws2 callee_saved sregs start_lbl)] @
@@ -277,6 +351,9 @@ let add_epilogue ret_regs sra sregs def =
        [adds_graph [ERTL.St_comment ("End Epilogue", start_lbl)]])
       start_lbl tmp_lbl def in
   let def = add_graph tmp_lbl last_stmt def in
+  let def = assign_result ret_regs def in
+  let def = generate (ERTL.St_comment ("Set result", def.ERTL.f_entry)) def in
+  let def = generate (ERTL.St_comment ("Epilogue", def.ERTL.f_entry)) def in
   change_exit_label tmp_lbl def
 
 
@@ -293,24 +370,39 @@ let add_pro_and_epilogue params ret_regs def =
   def
 
 
-let set_params_hdw params =
+(** [set_params_hdw params def] adds instructions at the beginning of the graph
+    of the ERTL function [def] that set to the conventional parameter registers
+    the contents of the pseudo-registers [params]. *)
+
+let set_params_hdw (params : Register.t) (def : ERTL.internal_function)
+    : ERTL.internal_function =
   assert false (* TODO M1 *)
 
-let set_params_stack params =
+(** [set_params_stack params def] adds instructions at the beginning of the
+    graph of the ERTL function [def] that set to the part of the stack that is
+    reserved for parameters the contents of the pseudo-registers [params]. *)
+
+let set_params_stack (params : Register.t list) (def : ERTL.internal_function)
+    : ERTL.internal_function =
   assert false (* TODO M1 *)
 
-(* Parameters are put in the physical parameter registers first. If there are
-   not enough such of these, then the remaining parameters are passed on the
-   stack. *)
+(** [set_params params def] adds instructions at the beginning of the graph of
+    the ERTL function [def] that set to the conventional physical location of
+    parameters the pseudo-registers [params]. They are written to the
+    conventional parameter registers as much as possible, and then to the
+    stack. *)
 
-let set_params params =
+let set_params (params : Register.t list) (def : ERTL.internal_function)
+    : ERTL.internal_function =
   assert false (* TODO M1 *)
 
 
-(* Fetching the result depends on the type of the function, or rather, the
-   number of registers that are waiting for a value. *)
+(** [fetch_result ret_regs def] adds instructions at the beginning of the ERTL
+    function [def] instructions that assign to the pseudo-registers [ret_regs]
+    the contents of the conventional result registers. *)
 
-let fetch_result ret_regs start_lbl =
+let fetch_result (ret_regs : Register.t list) (def : ERTL.internal_function)
+    : ERTL.internal_function =
   assert false (* TODO M1 *)
 
 
@@ -321,25 +413,29 @@ let fetch_result ret_regs start_lbl =
 
 let translate_call f args ret_regs start_lbl dest_lbl def =
   let nb_args = List.length args in
-  add_translates
-    ([adds_graph [ERTL.St_comment ("Starting a call", start_lbl)] ;
-      adds_graph [ERTL.St_comment ("Setting up parameters", start_lbl)]] @
-     set_params args @
-     [adds_graph [ERTL.St_call (f, nb_args, start_lbl)] ;
-      adds_graph [ERTL.St_comment ("Fetching result", start_lbl)] ;
-      fetch_result ret_regs ;
-      adds_graph [ERTL.St_comment ("End of call sequence", start_lbl)]])
-    start_lbl dest_lbl def
+  let def = generate (ERTL.St_comment ("End of call sequence", dest_lbl)) def in
+  let def = fetch_result ret_regs def in
+  let def =
+    generate (ERTL.St_comment ("Fetching result", def.ERTL.f_entry)) def in
+  let def = generate (ERTL.St_call (f, nb_args, def.ERTL.f_entry)) def in
+  let def = set_params args def in
+  let def =
+    generate
+      (ERTL.St_comment ("Setting up parameters", def.ERTL.f_entry)) def in
+  add_graph
+    start_lbl (ERTL.St_comment ("Starting a call", def.ERTL.f_entry)) def
 
 let translate_tailcall f args start_lbl dummy_lbl def =
   let nb_args = List.length args in
-  add_translates
-    ([adds_graph [ERTL.St_comment ("Starting a call", start_lbl)] ;
-      adds_graph [ERTL.St_comment ("Setting up parameters", start_lbl)]] @
-     set_params args @
-     [adds_graph [ERTL.St_tailcall (f, nb_args)] ;
-      adds_graph [ERTL.St_comment ("End of call sequence", start_lbl)]])
-    start_lbl dummy_lbl def
+  let def =
+    generate (ERTL.St_comment ("End of call sequence", dummy_lbl)) def in
+  let def = generate (ERTL.St_tailcall (f, nb_args)) def in
+  let def = set_params args def in
+  let def =
+    generate
+      (ERTL.St_comment ("Setting up parameters", def.ERTL.f_entry)) def in
+  add_graph
+    start_lbl (ERTL.St_comment ("Starting a call", def.ERTL.f_entry)) def
 
 
 let translate_stmt lbl stmt def = match stmt with
@@ -429,12 +525,6 @@ let translate_funct (id, def) =
    function. Indeed, the instructions for calling conventions (stack allocation
    for example) are added at the very beginning of the function, thus before the
    first cost label. *)
-
-let generate stmt def =
-  let entry = Label.Gen.fresh def.ERTL.f_luniverse in
-  let def =
-    { def with ERTL.f_graph = Label.Map.add entry stmt def.ERTL.f_graph } in
-  { def with ERTL.f_entry = entry }
 
 let find_and_remove_first_cost_label def =
   let rec aux lbl = match Label.Map.find lbl def.ERTL.f_graph with
