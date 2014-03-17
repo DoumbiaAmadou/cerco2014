@@ -30,13 +30,22 @@ let translate_code code =
   List.flatten (List.map translate_statement code)
 
 
-let translate_fun_def (id, def) =
+(** [translate_fun_def fundef] returns the translation of the body of the [LIN]
+    function [fundef] into a list of assembly instructions. *)
+
+let translate_fun_def ((id, def) : (string * LIN.function_def))
+    : Driver.TargetArch.register Arch.generic_instructions =
   match def with
     | LIN.F_int code -> (Arch.ILabel id) :: (translate_code code)
     | LIN.F_ext ext -> []
 
 
-let code functs =
+(** [code functs] returns the inlined assembly instructions obtained by
+    concatenating the translations of the body of the [LIN] functions
+    [functs] *)
+
+let code (functs : (string * LIN.function_def) list)
+    : Driver.TargetArch.register Arch.generic_instructions =
   assert false (* TODO M1 *)
 
 

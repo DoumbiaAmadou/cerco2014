@@ -42,7 +42,7 @@ end) = struct
 
   open S
 
-  let rec visit l =
+  let rec visit (l : Label.t) : unit =
     assert false (* TODO M1 *)
 
 end
