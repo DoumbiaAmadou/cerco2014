@@ -85,11 +85,11 @@ type statement =
   (* Return statement. *)
   | St_return of Register.t option
 
-  |St_addi of Register.t * Register.t * int * Label.t
+  |St_addi of Register.t * Register.t * AST.immediate * Label.t
 
-  |St_lw of AST.quantity * Register.t * int * Register.t * Label.t
+  |St_lw of AST.quantity * Register.t * AST.immediate * Register.t * Label.t
 
-  |St_sw of AST.quantity * Register.t * int * Register.t * Label.t
+  |St_sw of AST.quantity * Register.t * AST.immediate * Register.t * Label.t
 
   |St_cmp_zero of AST.cmp * Register.t * Label.t * Label.t
 
