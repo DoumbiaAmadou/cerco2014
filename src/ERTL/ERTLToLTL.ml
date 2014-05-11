@@ -22,10 +22,34 @@ let translate_internal f (int_fun : ERTL.internal_function)
     add_graph l stmt ;
     l in
 
-  (* Build an interference graph for this function, and color
-     it. Define a function that allows consulting the coloring. *)
+  (* Build the liveness analysis and the interference graph of the function. *)
 
   let module G = struct
+    let fun_name = f
+    let entry = int_fun.ERTL.f_entry
+    let succs lbl = match Label.Map.find lbl int_fun.ERTL.f_graph with
+      | ERTL.St_skip lbl'
+      | ERTL.St_comment (_, lbl')
+      | ERTL.St_cost (_, lbl')
+      | ERTL.St_newframe lbl'
+      | ERTL.St_delframe lbl'
+      | ERTL.St_framesize (_, lbl')
+      | ERTL.St_get_hdw (_, _, lbl')
+      | ERTL.St_set_hdw (_, _, lbl')
+      | ERTL.St_hdw_to_hdw (_, _, lbl')
+      | ERTL.St_move (_, _, lbl')
+      | ERTL.St_int (_, _, lbl')
+      | ERTL.St_unop (_, _, _, lbl')
+      | ERTL.St_binop (_, _, _, _, lbl')
+      | ERTL.St_addrN (_, _, _, lbl')
+      | ERTL.St_load (_, _, _, lbl')
+      | ERTL.St_store (_, _, _, lbl')
+      | ERTL.St_call (_, _, lbl') -> [lbl']
+      | ERTL.St_cond (_, lbl1, lbl2) -> [lbl1 ; lbl2]
+      | ERTL.St_tailcall _ | ERTL.St_return _ -> []
+    let stmt lbl = Label.Map.find lbl int_fun.ERTL.f_graph
+    let pseudo_registers = Register.Set.elements int_fun.ERTL.f_locals
+    let valuation = Liveness.analyze int_fun
     let liveafter, graph = Build.build int_fun
     let uses = Uses.examine_internal int_fun
     let verbose = false
@@ -34,51 +58,23 @@ let translate_internal f (int_fun : ERTL.internal_function)
 	Printf.printf "Starting hardware register allocation for %s.\n" f
   end in
 
-  let module C = Coloring.Color (G) in
+  (* Instantiate the choosen register allocation algorithm. *)
 
-  let lookup r =
-    Interference.Vertex.Map.find (Interference.lookup G.graph r) C.coloring
-  in
+  let module RegisterAllocator : Allocator.S = Choosen_allocator.Make (G) in
 
-  (* Restrict the interference graph to concern spilled vertices only,
-     and color it again, this time using stack slots as colors. *)
+  (* Fetch the results of the allocation: a function that associates a physical
+     location to each pseudo-register of the function, and the needed size in
+     the stack. *)
 
-  let module H = struct
-    let graph = Interference.droph (Interference.restrict G.graph (fun v ->
-      match Interference.Vertex.Map.find v C.coloring with
-      | Coloring.Spill ->
-	  true
-      | Coloring.Color _ ->
-	  false
-    ))
-    let verbose = false
-    let () =
-      if verbose then
-	Printf.printf "Starting stack slot allocation for %s.\n" f
-  end in
+  let lookup = RegisterAllocator.lookup in
 
-  let module S = Spill.Color (H) in
-
-  (* Define a new function that consults both colorings at once. *)
-
-  let lookup r =
-    match lookup r with
-    | Coloring.Spill ->
-	ERTLToLTLI.Spill (Interference.Vertex.Map.find (Interference.lookup H.graph r) S.coloring)
-    | Coloring.Color color ->
-	ERTLToLTLI.Color color
-  in
-
-  (* We are now ready to instantiate the functor that deals with the
-     translation of instructions. The reason why we make this a
-     separate functor is purely pedagogical. Smaller modules are
-     easier to understand. *)
+  let locals = RegisterAllocator.locals in
 
   (* We add the additional stack size required for spilled register to the stack
      size previously required for the function: this is the final stack size
      required for the locals. *)
 
-  let locals = S.locals + int_fun.ERTL.f_stacksize in
+  let locals = locals + int_fun.ERTL.f_stacksize in
 
   (* The full stack size is then the size of the locals in the stack plus the
      size of the formal parameters of the function that will live in the

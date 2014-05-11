@@ -142,6 +142,12 @@ end) = struct
       l
 
 
+  (** [write r l] adds instructions at the beginning of the current graph that
+      point to the label [l] and that translate the writing of the
+      pseudo-register [r]. It returns the hardware register where to write if
+      you want to translate the writing to [r], and the new entry of the
+      obtained graph. *)
+
   let write (r : Register.t) (l : Label.t)
       : (Driver.TargetArch.register * Label.t) =
     match lookup r with
@@ -154,7 +160,7 @@ end) = struct
       | Spill off ->
 	(* Pseudo-register [r] has been mapped to offset [off] in the local zone
 	   of the stack. Then, write into [sst] (never allocated) and transfer
-	   control to an instruction that copies [st4] in the designated
+	   control to an instruction that copies [st5] in the designated
 	   location of the stack before branching to [l]. *)
 	(st5, set_stack off st5 l)
 
@@ -211,15 +217,25 @@ end) = struct
     read [st5] [r]
       (fun hdws -> assert (List.length hdws >= 1); stmt (List.hd hdws)) l
 
-  let read2 r1 r2
-      (stmt : Driver.TargetArch.register ->
-              Driver.TargetArch.register ->
-              LTL.statement list)
-      l =
+  (** [read2 r1 r2 stmt l] adds instructions at the beginning of the current
+      graph that point to the label [l] and that first translate the reading of
+      the pseudo-registers [r1] and [r2] and then behave as [stmt] when it is
+      provided some hardware registers that contains the result of the
+      readings. The labels inside [stmts] will be replaced by the intended
+      labels. The whole function returns the new entry of the obtained graph. *)
+
+  let read2
+      (r1    : Register.t)
+      (r2    : Register.t)
+      (stmts : Driver.TargetArch.register ->
+               Driver.TargetArch.register ->
+               LTL.statement list)
+      (l     : Label.t)
+      : Label.t =
     read [st5 ; st6] [r1 ; r2]
       (fun hdws ->
 	assert (List.length hdws >= 2) ;
-	stmt (List.nth hdws 0) (List.nth hdws 1)) l
+	stmts (List.nth hdws 0) (List.nth hdws 1)) l
 
   let read_addr addr
       (stmt : Driver.TargetArch.address -> LTL.statement list) l =
@@ -319,7 +335,8 @@ end) = struct
 	LTL.St_skip (move (lookup r1) (lookup r2) l)
 
       | ERTL.St_int (r, i, l) ->
-	assert false (* TODO M1 *)
+	let (hdw, l) = write r l in
+	LTL.St_int (hdw, i, l)
 
       | ERTL.St_unop (unop, destr, srcr, l) ->
 	let (dhdw, l) = write destr l in
@@ -327,7 +344,12 @@ end) = struct
 	  (read1 srcr (fun shdw -> [LTL.St_unop (unop, dhdw, shdw, l)]) l)
 
       | ERTL.St_binop (binop, destr, sourcer1, sourcer2, l) ->
-	assert false (* TODO M1 *)
+	let (desthdw, l) = write destr l in
+	let l =
+	  read2 sourcer1 sourcer2
+	    (fun sourcehdw1 sourcehdw2 ->
+	      [LTL.St_binop (binop, desthdw, sourcehdw1, sourcehdw2, l)]) l in
+	LTL.St_skip l
 
       | ERTL.St_addrN (r, id, n, l) ->
 	assert (List.length st_addr0 >= n) ;

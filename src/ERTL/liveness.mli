@@ -30,6 +30,11 @@ end
 
 val defined: statement -> L.t
 
+(* [used i] is the set of variables used at (read by)
+   statement [i]. *)
+
+val used: statement -> L.t
+
 (* A valuation is a function that maps a program point (a control flow
    graph label) to the set of variables that are live after that
    point. *)
